@@ -1,0 +1,19 @@
+{
+  "name": "transpal-gemini-transcriber",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "使用 Gemini 進行音訊轉錄的工具",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.4.1",
+  "dependencies": {
+    "@google/genai": "^0.6.1",
+    "dotenv": "^16.4.5",
+    "uuid": "^9.0.1"
+  }
+}
