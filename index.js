@@ -20,7 +20,7 @@ import { v4 as uuidv4 } from "uuid";
 // 初始化 Google AI
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-async function processAudioFile(filePath) {
+async function processAudioFile(filePath, customPrompt = null) {
   // 從檔案路徑取得檔案名稱
   const fileName = path.basename(filePath);
   const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
@@ -34,6 +34,20 @@ async function processAudioFile(filePath) {
 
   console.log("檔案上傳成功");
 
+  // 預設 prompt
+  const defaultPrompt = `請分析這段音訊並產生逐字稿。請注意：
+1. 需要包含說話者、開始時間和結束時間
+2. 若無法從音訊中辨識出說話者，請以 SPEAKER_01 依序編號
+3. 請根據內容產生適當的標題
+4. 請產生適合用於網址的英文 slug
+5. summary 支援 Markdown 格式，列出 4-6 個重點討論內容，可以使用粗體、斜體、列表等進行強調和排版
+6. 標點符號請使用繁體中文（台灣）的標點符號，像是：，。？！「」、
+7. 若單個對話過長，請適當分割
+8. 請不要偷懶，這是個很重要的工作，請完成所有音訊對話的辨識`;
+
+  // 使用自定義 prompt 或預設 prompt
+  const promptText = defaultPrompt + customPrompt ?? "";
+
   // 使用 Gemini 生成內容
   const result = await ai.models.generateContent({
     model: process.env.GEMINI_MODEL,
@@ -42,15 +56,7 @@ async function processAudioFile(filePath) {
         role: "user",
         parts: [
           {
-            text: `請分析這段音訊並產生逐字稿。請注意：
-1. 需要包含說話者、開始時間和結束時間
-2. 若無法從音訊中辨識出說話者，請以 SPEAKER_01 依序編號
-3. 請根據內容產生適當的標題
-4. 請產生適合用於網址的英文 slug
-5. summary 支援 Markdown 格式，列出 4-6 個重點討論內容，可以使用粗體、斜體、列表等進行強調和排版
-6. 標點符號請使用繁體中文（台灣）的標點符號，像是：，。？！「」、
-7. 若單個對話過長，請適當分割
-8. 請不要偷懶，這是個很重要的工作，請完成所有音訊對話的辨識`,
+            text: promptText,
           },
           {
             fileData: {
@@ -167,12 +173,51 @@ function processTranscription(rawResponse, fileName) {
 
 async function main() {
   try {
-    const mediaPath = process.argv[2];
+    const args = process.argv.slice(2);
+    const mediaPath = args[0];
+
     if (!mediaPath) {
+      console.log("使用方式：");
+      console.log("  pnpm start <音訊檔案路徑> [--prompt <自定義prompt>]");
+      console.log(
+        "  pnpm start <音訊檔案路徑> [--prompt-file <prompt檔案路徑>]"
+      );
+      console.log("");
+      console.log("範例：");
+      console.log("  pnpm start audio.mp4");
+      console.log(
+        "  pnpm start audio.mp4 --prompt '請產生詳細的逐字稿並分析講者情緒'"
+      );
+      console.log("  pnpm start audio.mp4 --prompt-file custom-prompt.txt");
       throw new Error("請提供音訊檔案路徑");
     }
 
-    const result = await processAudioFile(mediaPath);
+    let customPrompt = null;
+
+    // 解析命令行參數
+    const promptIndex = args.indexOf("--prompt");
+    const promptFileIndex = args.indexOf("--prompt-file");
+
+    if (promptIndex !== -1 && promptIndex + 1 < args.length) {
+      // 使用命令行提供的 prompt
+      customPrompt = args[promptIndex + 1];
+      console.log("使用自定義 prompt");
+    } else if (promptFileIndex !== -1 && promptFileIndex + 1 < args.length) {
+      // 從檔案讀取 prompt
+      const promptFilePath = args[promptFileIndex + 1];
+      try {
+        const { readFile } = await import("fs/promises");
+        customPrompt = await readFile(promptFilePath, "utf8");
+        console.log(`從檔案讀取 prompt: ${promptFilePath}`);
+      } catch (error) {
+        console.error(`無法讀取 prompt 檔案: ${promptFilePath}`);
+        throw error;
+      }
+    } else {
+      console.log("使用預設 prompt");
+    }
+
+    const result = await processAudioFile(mediaPath, customPrompt);
 
     // 將結果寫入檔案
     const outputPath = `${result.info.slug}.json`;
