@@ -1,11 +1,28 @@
-# TransPal Gemini Transcriber
+# TransPal Transcriber
 
-使用 Google Gemini 進行音訊轉錄的工具，可自動產生逐字稿、摘要及時間戳記。
+使用 Gemini、OpenRouter 和 AI SDK 進行音訊轉錄的工具，專為長音檔設計，可自動產生逐字稿、摘要及時間戳記。
+
+## 特色
+
+- **長音訊支援**：自動將長音檔分割為 5 分鐘的小片段進行處理，解決模型 token 限制與偷懶問題。
+- **上下文感知**：在轉錄每個片段時，會參考上一段的內容與已知說話者，確保語意與角色連貫。
+- **全域說話者統一**：轉錄完成後，AI 會分析完整內容，自動將不一致的稱呼（如 "SPEAKER_01"）統一為真實姓名。
+- **結構化輸出**：使用 AI SDK 的 `generateText` 搭配 `Output.object`，確保輸出穩定的 JSON 格式。
+- **自動重試機制**：遇到 API 錯誤時會自動重試，提升穩定性。
+
+## 為什麼選擇 Gemini？
+
+比起 Whisper，使用 Gemini 進行轉錄雖然成本較高，但對於中文的轉譯品質有巨大的進步，特別體現在：
+
+- **成語與慣用語**的精確辨識
+- **特殊領域名詞**（如科技、醫療、法律）的正確率
+- **語意連貫性**與標點符號的自然程度
 
 ## 系統需求
 
-- Node.js (v18 或以上)
+- Node.js (v22.18.0 或以上)
 - pnpm
+- **ffmpeg** (必須安裝並加入系統 PATH，用於音訊分割)
 
 ## 安裝
 
@@ -17,12 +34,14 @@ pnpm install
 cp .env.example .env
 ```
 
-請在 `.env` 中填入您的 Gemini API Key：
+請在 `.env` 中填入您的 OpenRouter API Key：
 
 ```bash
-GEMINI_API_KEY=your_api_key_here
-GEMINI_MODEL=gemini-2.5-pro-exp-03-25
+OPENROUTER_API_KEY=your_api_key_here
+OPENROUTER_MODEL=google/gemini-3-pro-preview
 ```
+
+> 建議使用 `google/gemini-3-pro-preview` 或 `google/gemini-2.5-pro` 以取得最佳轉錄品質。
 
 ## 使用方式
 
@@ -57,27 +76,7 @@ pnpm start interview.mp4 --prompt "請分析音訊並特別注意講者的情緒
 pnpm start meeting.mp4 --prompt-file example-prompt.txt
 ```
 
-我們提供了兩個範例 prompt 檔案：
-
-- `example-prompt.txt`：基礎增強版 prompt，加入情緒分析
-- `advanced-prompt.txt`：專業級 prompt，適合正式會議或訪談
-
-輸出會以 JSON 格式儲存，檔名為轉錄內容的英文 slug。
-
-### 注意事項
-
-- 建議輸入少於 30 分鐘的音訊檔案
-- 目前時間戳記的準確度可能不夠理想，須等待更強大的模型或調整 prompt
-- 使用自定義 prompt 時，請確保包含基本的轉錄要求（說話者、時間戳記等）
-- 自定義 prompt 可以用來改善特定場景的轉錄品質，如會議記錄、訪談分析等
-
-### Prompt 撰寫建議
-
-- **明確指定輸出格式要求**：確保包含說話者、時間戳記等基本元素
-- **加入特定領域知識**：根據音訊內容（如醫療、法律、技術討論）調整專業要求
-- **指定語言風格**：標點符號規範、語調要求等
-- **額外分析需求**：情緒分析、關鍵決策點標記、專業術語解釋等
-- **品質控制**：要求完整性、準確性、邏輯連貫性
+輸出會以 TransPal JSON 格式儲存，檔名為轉錄內容的英文 slug。
 
 ## 輸出格式
 
@@ -94,15 +93,28 @@ pnpm start meeting.mp4 --prompt-file example-prompt.txt
     {
       "id": "uuid",
       "start": 0,
-      "end": 10,
+      "end": 300,
       "type": "speech",
-      "speaker": "SPEAKER_01",
-      "text": "說話內容"
+      "speaker": "葛如鈞委員",
+      "text": "說話內容..."
     }
   ]
 }
 ```
 
+## 技術架構
+
+本專案使用最新的 AI SDK 架構：
+
+- **核心邏輯**：
+  1.  **分割**：使用 `ffmpeg` 將音訊切分為 300 秒片段。
+  2.  **轉錄**：逐段呼叫 AI 進行轉錄，並傳入前文摘要以維持連貫性。
+  3.  **正規化**：所有片段完成後，將完整逐字稿送回 AI 進行說話者身分分析與統一。
+  4.  **摘要**：生成標題與重點摘要。
+- **工具庫**：
+  - `ai`: AI SDK Core (v6)
+  - `zod`: 資料驗證與 Schema 定義
+
 ## License
 
-ISC
+MIT
