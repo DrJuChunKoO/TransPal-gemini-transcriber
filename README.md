@@ -17,6 +17,7 @@
 - **成語與慣用語**的精確辨識
 - **特殊領域名詞**（如科技、醫療、法律）的正確率
 - **語意連貫性**與標點符號的自然程度
+- **多人同時說話**時，對重疊音訊的強大辨識與區分能力
 
 ## 系統需求
 
@@ -41,7 +42,7 @@ OPENROUTER_API_KEY=your_api_key_here
 OPENROUTER_MODEL=google/gemini-3-pro-preview
 ```
 
-> 建議使用 `google/gemini-3-pro-preview` 或 `google/gemini-2.5-pro` 以取得最佳轉錄品質。
+> 建議使用 `google/gemini-3-pro-preview` 或 `google/gemini-3-flash-preview` 以取得最佳轉錄品質。
 
 ## 使用方式
 
