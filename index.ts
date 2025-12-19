@@ -436,8 +436,9 @@ async function main() {
 
     const result = await processAudioFile(mediaPath, customPrompt || undefined);
 
-    // 將結果寫入檔案
-    const outputPath = `${result.info.slug}.json`;
+    // 將結果寫入檔案，存到和音檔同一個資料夾下
+    const outputDir = path.dirname(mediaPath);
+    const outputPath = path.join(outputDir, `${result.info.slug}.json`);
     await writeFile(outputPath, JSON.stringify(result, null, 2), "utf8");
     console.log(`已將轉錄結果儲存至：${outputPath}`);
   } catch (error) {
