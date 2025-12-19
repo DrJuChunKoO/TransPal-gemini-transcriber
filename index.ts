@@ -70,29 +70,22 @@ async function transcribeChunk(
   chunkIndex: number,
   previousContext: string,
   knownSpeakers: string[],
-  customPrompt: string | null
+  customPrompt: string | null,
+  promptTemplate: string
 ) {
   console.log(`正在轉錄第 ${chunkIndex + 1} 個片段...`);
   const fileData = await readFile(chunkPath);
 
-  const systemPrompt = `你是一個專業的逐字稿轉錄助理。
-請將提供的音訊片段轉錄為逐字稿。
-
-重要指示：
-1. **說話者一致性**：
-   - 已知說話者列表：${
-     knownSpeakers.length > 0 ? knownSpeakers.join(", ") : "尚無"
-   }
-   - 上一段的最後幾句（供參考）：
-     ${previousContext}
-   - 如果聽到相同的聲音或語境延續，請使用相同的說話者名稱。
-   - 若無法明確辨識，請使用 SPEAKER_01, SPEAKER_02 等，但要盡量保持與上下文一致。
-
-2. **格式要求**：
-   - 時間戳記請以「本片段的開始」為 0 秒開始計算。
-   - 全文標點符號請使用 **繁體中文（台灣）標準**。
-
-${customPrompt ? `額外要求：${customPrompt}` : ""}`;
+  const systemPrompt = promptTemplate
+    .replace(
+      "{{knownSpeakers}}",
+      knownSpeakers.length > 0 ? knownSpeakers.join(", ") : "尚無"
+    )
+    .replace("{{previousContext}}", previousContext || "尚無")
+    .replace(
+      "{{customPrompt}}",
+      customPrompt ? `額外要求：${customPrompt}` : ""
+    );
 
   let retries = 3;
   while (retries > 0) {
@@ -186,6 +179,10 @@ async function processAudioFile(
   filePath: string,
   customPrompt: string | null = null
 ) {
+  const promptTemplate = await readFile(
+    path.join(process.cwd(), "prompt.md"),
+    "utf8"
+  );
   const fileName = path.basename(filePath);
   const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
 
@@ -210,8 +207,8 @@ async function processAudioFile(
     for (let i = 0; i < chunkPaths.length; i++) {
       const chunkPath = chunkPaths[i];
 
-      // 準備上下文：取最後 3 筆轉錄作為參考
-      const lastFewItems = accumulatedResults.transcription.slice(-3);
+      // 準備上下文：取最後 10 筆轉錄作為參考
+      const lastFewItems = accumulatedResults.transcription.slice(-10);
       const previousContext = lastFewItems
         .map((item) => `${item.speaker}: ${item.text}`)
         .join("\n");
@@ -222,7 +219,8 @@ async function processAudioFile(
         i,
         previousContext,
         Array.from(knownSpeakers),
-        customPrompt
+        customPrompt,
+        promptTemplate
       );
 
       // 處理轉錄結果
