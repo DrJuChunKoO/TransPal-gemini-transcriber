@@ -39,6 +39,10 @@ type accumulatedResultsType = {
   summary: string;
 };
 
+function normalizeMarkdownNewlines(markdown: string) {
+  return markdown.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n");
+}
+
 // 提取音訊片段
 async function extractAudioSegment(
   inputPath: string,
@@ -506,7 +510,7 @@ async function generateTitleAndSummary(
     ...accumulatedResults,
     title: output.title,
     slug: output.slug,
-    summary: output.summary,
+    summary: normalizeMarkdownNewlines(output.summary),
   };
 }
 
