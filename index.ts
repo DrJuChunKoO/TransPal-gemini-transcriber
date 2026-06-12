@@ -1,6 +1,6 @@
 import "dotenv/config";
 import path from "path";
-import { writeFile, readFile, mkdir, rm, readdir } from "fs/promises";
+import { writeFile, readFile, mkdir, rm, readdir, access, rename } from "fs/promises";
 import { generateText, Output } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { z } from "zod";
@@ -10,6 +10,50 @@ import crypto from "crypto";
 
 const execAsync = promisify(exec);
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const PROGRESS_FILE = "progress.json";
+
+function getTempDir(filePath: string): string {
+  const hash = crypto
+    .createHash("md5")
+    .update(path.resolve(filePath))
+    .digest("hex")
+    .slice(0, 16);
+  return path.join(process.cwd(), `temp_chunks_${hash}`);
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadProgress(
+  tempDir: string
+): Promise<Record<number, Array<{ speaker: string; startTime: number; endTime: number; text: string }>>> {
+  const progressPath = path.join(tempDir, PROGRESS_FILE);
+  if (!(await fileExists(progressPath))) return {};
+  try {
+    const data = JSON.parse(await readFile(progressPath, "utf8"));
+    return data.chunkResults || {};
+  } catch {
+    console.warn("progress.json 損壞，將從頭開始轉錄");
+    return {};
+  }
+}
+
+async function saveProgress(
+  tempDir: string,
+  chunkResults: Record<number, Array<{ speaker: string; startTime: number; endTime: number; text: string }>>
+) {
+  const progressPath = path.join(tempDir, PROGRESS_FILE);
+  const tmpPath = progressPath + ".tmp";
+  await writeFile(tmpPath, JSON.stringify({ chunkResults }), "utf8");
+  await rename(tmpPath, progressPath);
+}
 
 // 初始化 OpenRouter 提供者
 const openrouter = createOpenRouter({
@@ -376,7 +420,7 @@ async function processAudioFile(
   );
   const fileName = path.basename(filePath);
   const nameWithoutExt = fileName.replace(/\.[^/.]+$/, "");
-  const tempDir = path.join(process.cwd(), "temp_chunks_" + Date.now());
+  const tempDir = getTempDir(filePath);
 
   let accumulatedResults: accumulatedResultsType = {
     title: "",
@@ -386,20 +430,58 @@ async function processAudioFile(
   };
 
   try {
-    const segmentTime = 60 * 10; // 增加到 3 分鐘以獲得更好的上下文
+    const segmentTime = 60 * 10;
     const chunkPaths = await splitAudio(filePath, tempDir, segmentTime);
     console.log(`共分割為 ${chunkPaths.length} 個片段`);
 
-    // 1. 先進行說話者識別
-    const initialSpeakers = await discoverSpeakers(filePath, tempDir);
+    // 載入已完成的進度
+    const completedChunks = await loadProgress(tempDir);
+    const validIndices = Object.keys(completedChunks)
+      .map(Number)
+      .filter((i) => i < chunkPaths.length);
+    const completedIndices = new Set(validIndices);
+    if (validIndices.length > 0) {
+      console.log(`偵測到之前的進度，已完成 ${validIndices.length}/${chunkPaths.length} 個片段，將從中斷處繼續`);
+    }
+
+    // 1. 說話者識別（僅在首次執行時）
+    const initialSpeakers =
+      completedIndices.size > 0
+        ? []
+        : await discoverSpeakers(filePath, tempDir);
 
     // 2. 順序轉錄以保持上下文一致性
     console.log(`開始順序轉錄以確保說話者一致性...`);
-    const allChunkResults = [];
+    const allChunkResults: Array<{ index: number; transcription: Array<{ speaker: string; startTime: number; endTime: number; text: string }> }> = [];
+
+    // 先載入已完成的結果（按 index 排序）
+    const sortedIndices = [...completedIndices].sort((a, b) => a - b);
+    for (const idx of sortedIndices) {
+      allChunkResults.push({ index: idx, transcription: completedChunks[idx] });
+    }
+
     let knownSpeakers = [...initialSpeakers];
     let previousContext = "";
 
+    // 重建已知說話者與上下文
+    const allExisting = allChunkResults.flatMap((r) => r.transcription);
+    const existingSpeakers = [...new Set(allExisting.map((t) => t.speaker))];
+    for (const s of existingSpeakers) {
+      if (!knownSpeakers.some((ks) => ks.startsWith(s))) {
+        knownSpeakers.push(s);
+      }
+    }
+    previousContext = allExisting
+      .slice(-100)
+      .map((t) => `${t.speaker}: ${t.text}`)
+      .join("\n");
+
     for (let i = 0; i < chunkPaths.length; i++) {
+      if (completedIndices.has(i)) {
+        console.log(`跳過已完成的第 ${i + 1} 個片段`);
+        continue;
+      }
+
       const chunkTranscription = await transcribeChunk(
         chunkPaths[i],
         i,
@@ -410,6 +492,10 @@ async function processAudioFile(
       );
 
       allChunkResults.push({ index: i, transcription: chunkTranscription });
+
+      // 儲存進度
+      completedChunks[i] = chunkTranscription;
+      await saveProgress(tempDir, completedChunks);
 
       // 更新已知說話者（去重）
       const currentSpeakers = [
@@ -455,17 +541,19 @@ async function processAudioFile(
       nameWithoutExt
     );
 
-    return transcription;
-  } catch (error: any) {
-    console.error("處理過程中發生錯誤：", error);
-    throw error;
-  } finally {
+    // 成功完成，清理暫存
     try {
       await rm(tempDir, { recursive: true, force: true });
       console.log("已清理暫存檔案");
     } catch (e) {
       console.error("清理暫存檔案失敗：", e);
     }
+
+    return transcription;
+  } catch (error: any) {
+    console.error("處理過程中發生錯誤：", error);
+    console.log(`進度已儲存，重新執行相同指令即可從中斷處繼續。若要放棄請使用 --clean。`);
+    throw error;
   }
 }
 
@@ -621,6 +709,7 @@ async function main() {
         "  pnpm start <音訊檔案路徑> [--prompt-file <prompt檔案路徑>]"
       );
       console.log("  pnpm start <音訊檔案路徑> --extract <JSON路徑> <項目ID>");
+      console.log("  pnpm start <音訊檔案路徑> --clean");
       console.log("");
       console.log("範例：");
       console.log("  pnpm start audio.mp4");
@@ -628,6 +717,7 @@ async function main() {
         "  pnpm start audio.mp4 --prompt '請產生詳細的逐字稿並分析講者情緒'"
       );
       console.log("  pnpm start audio.mp4 --prompt-file custom-prompt.txt");
+      console.log("  pnpm start audio.mp4 --clean");
       console.log("  pnpm start audio.mp4 --extract result.json some-uuid");
       throw new Error("請提供音訊檔案路徑");
     }
@@ -651,6 +741,18 @@ async function main() {
       }
     } else {
       console.log("使用預設 prompt");
+    }
+
+    const cleanIndex = args.indexOf("--clean");
+    if (cleanIndex !== -1) {
+      const tempDir = getTempDir(mediaPath);
+      if (await fileExists(tempDir)) {
+        await rm(tempDir, { recursive: true, force: true });
+        console.log(`已清除暫存目錄：${tempDir}`);
+      } else {
+        console.log("找不到暫存目錄，無需清除");
+      }
+      return;
     }
 
     const result = await processAudioFile(mediaPath, customPrompt || undefined);

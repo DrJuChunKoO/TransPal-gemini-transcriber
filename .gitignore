@@ -1,4 +1,5 @@
 node_modules
 .env
 .DS_Store
+temp_chunks_*
 itri-mohw-health-standards-project-clarification.json
